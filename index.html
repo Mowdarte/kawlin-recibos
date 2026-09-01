@@ -936,6 +936,7 @@
      comprovante_base64 text,
      comprovante_nome text,
      comprovante_tipo text,
+     comprovantes jsonb default '[]',
      criado_em timestamp with time zone default now()
    );
 
@@ -1009,6 +1010,7 @@
    -- alter table recibos add column if not exists comprovante_base64 text;
    -- alter table recibos add column if not exists comprovante_nome text;
    -- alter table recibos add column if not exists comprovante_tipo text;
+   -- alter table recibos add column if not exists comprovantes jsonb default '[]';
    -- alter table despesas add column if not exists comprovante_base64 text;
    -- alter table despesas add column if not exists comprovante_nome text;
    -- alter table despesas add column if not exists comprovante_tipo text;
@@ -1506,7 +1508,8 @@ function renderMensalidadesCliente(){
   empty.style.display='none';
   lista.forEach(r=>{
     const st = statusEfetivo(r);
-    const temComprovante = !!r.comprovante_base64;
+    const anexosDoMes = comprovantesDoRecibo(r);
+    const temComprovante = anexosDoMes.length > 0;
     const precisaPreencher = precisaPreencherFaturamento(r);
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -1514,7 +1517,7 @@ function renderMensalidadesCliente(){
       <td>${fmtDataBR(r.vencimento)}</td>
       <td class="num">${fmtBRL(r.total)}${precisaPreencher ? ' <span class="hint" style="color:var(--warn);">(sem faturamento)</span>' : ''}</td>
       <td><span class="badge badge-${st}">${statusLabel(st)}</span></td>
-      <td>${temComprovante ? '<span class="row-link" data-act="ver-comp">ver comprovante</span>' : '<span class="hint">sem comprovante</span>'}</td>
+      <td>${temComprovante ? `<span class="row-link" data-act="ver-comp">ver comprovante${anexosDoMes.length>1?'s ('+anexosDoMes.length+')':''}</span>` : '<span class="hint">sem comprovante</span>'}</td>
       <td>
         <div class="row-actions">
           ${precisaPreencher ? '<span class="row-link" data-act="preencher" style="color:var(--terracotta-dark);font-weight:700;">preencher faturamento</span>' : ''}
@@ -1524,7 +1527,7 @@ function renderMensalidadesCliente(){
       </td>
     `;
     if(temComprovante){
-      tr.querySelector('[data-act="ver-comp"]').onclick = (e)=>{ e.stopPropagation(); abrirAnexoEmNovaAba(r.comprovante_base64); };
+      tr.querySelector('[data-act="ver-comp"]').onclick = (e)=>{ e.stopPropagation(); abrirAnexoEmNovaAba(anexosDoMes[0].base64); };
     }
     const btnPreencher = tr.querySelector('[data-act="preencher"]');
     if(btnPreencher){
@@ -1637,7 +1640,8 @@ function renderMensalidadesGeral(){
     const tbody = grupo.querySelector('tbody');
     recibosCliente.forEach(r=>{
       const st = statusEfetivo(r);
-      const temComprovante = !!r.comprovante_base64;
+      const anexosDoMes = comprovantesDoRecibo(r);
+      const temComprovante = anexosDoMes.length > 0;
       const precisaPreencher = precisaPreencherFaturamento(r);
       const tr = document.createElement('tr');
       tr.innerHTML = `
@@ -1645,7 +1649,7 @@ function renderMensalidadesGeral(){
         <td>${fmtDataBR(r.vencimento)}</td>
         <td class="num">${fmtBRL(r.total)}${precisaPreencher ? ' <span class="hint" style="color:var(--warn);">(sem faturamento)</span>' : ''}</td>
         <td><span class="badge badge-${st}">${statusLabel(st)}</span></td>
-        <td>${temComprovante ? '<span class="row-link" data-act="ver-comp">ver comprovante</span>' : '<span class="hint">sem comprovante</span>'}</td>
+        <td>${temComprovante ? `<span class="row-link" data-act="ver-comp">ver comprovante${anexosDoMes.length>1?'s ('+anexosDoMes.length+')':''}</span>` : '<span class="hint">sem comprovante</span>'}</td>
         <td>
           <div class="row-actions">
             ${precisaPreencher ? '<span class="row-link" data-act="preencher" style="color:var(--terracotta-dark);font-weight:700;">preencher faturamento</span>' : ''}
@@ -1655,7 +1659,7 @@ function renderMensalidadesGeral(){
         </td>
       `;
       if(temComprovante){
-        tr.querySelector('[data-act="ver-comp"]').onclick = ()=>abrirAnexoEmNovaAba(r.comprovante_base64);
+        tr.querySelector('[data-act="ver-comp"]').onclick = ()=>abrirAnexoEmNovaAba(anexosDoMes[0].base64);
       }
       const btnPreencher = tr.querySelector('[data-act="preencher"]');
       if(btnPreencher){
@@ -1783,6 +1787,40 @@ function renderAnexoWrap(containerId, dado, onSelecionar, onRemover){
       <button type="button" class="print-remove" onclick="${onRemover}()">remover</button>
     </div>
   `;
+}
+
+/* ---------------- Comprovantes do recibo (suporta vários anexos por mês) ---------------- */
+function comprovantesDoRecibo(r){
+  if(!r) return [];
+  if(Array.isArray(r.comprovantes) && r.comprovantes.length) return r.comprovantes;
+  // compatibilidade com recibos antigos que só tinham um único comprovante
+  if(r.comprovante_base64) return [{base64: r.comprovante_base64, nome: r.comprovante_nome, tipo: r.comprovante_tipo}];
+  return [];
+}
+function renderComprovantesRecibo(r){
+  const wrap = document.getElementById('recibo-comprovante-wrap');
+  if(!wrap) return;
+  const lista = comprovantesDoRecibo(r);
+  let html = '';
+  lista.forEach((dado, idx)=>{
+    const isPdf = dado.tipo === 'pdf';
+    html += `
+      <div class="anexo-row" style="margin-bottom:8px;">
+        ${isPdf ? `<div class="anexo-pdf-badge">PDF</div>` : `<img class="anexo-thumb" src="${dado.base64}">`}
+        <span class="anexo-nome">${dado.nome || 'comprovante ' + (idx+1)}</span>
+        <span class="anexo-view-link" data-act="ver" data-idx="${idx}">ver</span>
+        <button type="button" class="print-remove" data-act="remover" data-idx="${idx}">remover</button>
+      </div>
+    `;
+  });
+  html += `<label class="print-upload-btn">+ anexar comprovante<input type="file" accept="image/*,.pdf" style="display:none;" onchange="onReciboComprovanteSelecionado(this)"></label>`;
+  wrap.innerHTML = html;
+  wrap.querySelectorAll('[data-act="ver"]').forEach(el=>{
+    el.onclick = ()=>abrirAnexoEmNovaAba(lista[parseInt(el.dataset.idx)].base64);
+  });
+  wrap.querySelectorAll('[data-act="remover"]').forEach(el=>{
+    el.onclick = ()=>removerComprovanteRecibo(parseInt(el.dataset.idx));
+  });
 }
 
 function popularSelectPacotes(selecionarId){
@@ -2069,7 +2107,8 @@ async function gerarMensalidadesRetroativas(c){
       const éPlaceholderIntocado = existente.observacoes === MARCADOR_AUTO_RETROATIVO
         && existente.status === 'pendente'
         && !Number(existente.volume_vendas||0)
-        && !existente.comprovante_base64;
+        && !existente.comprovante_base64
+        && !(Array.isArray(existente.comprovantes) && existente.comprovantes.length);
       const mudouValor = Number(existente.valor_pacote||0).toFixed(2) !== valorPacoteMes.toFixed(2);
       const mudouData = existente.vencimento !== vencISO;
       if(éPlaceholderIntocado && (mudouValor || mudouData)){
@@ -2649,8 +2688,7 @@ function abrirRecibo(r){
   actions.appendChild(btnExcluir);
 
   window.currentReciboIdAberto = r.id;
-  const comprovanteAtual = r.comprovante_base64 ? {base64:r.comprovante_base64, nome:r.comprovante_nome, tipo:r.comprovante_tipo} : null;
-  renderAnexoWrap('recibo-comprovante-wrap', comprovanteAtual, 'onReciboComprovanteSelecionado', 'removerReciboComprovante');
+  renderComprovantesRecibo(r);
 
   openModal('modal-recibo');
 }
@@ -2659,26 +2697,30 @@ function onReciboComprovanteSelecionado(inputEl){
   const file = inputEl.files && inputEl.files[0];
   if(!file) return;
   const reciboId = window.currentReciboIdAberto;
+  const r = recibos.find(x=>x.id === reciboId);
+  if(!r) return;
   lerArquivoComoAnexo(file).then(async dado=>{
-    const {error} = await supa.from('recibos').update({
-      comprovante_base64: dado.base64, comprovante_nome: dado.nome, comprovante_tipo: dado.tipo,
-    }).eq('id', reciboId);
+    const novaLista = [...comprovantesDoRecibo(r), dado];
+    const {error} = await supa.from('recibos').update({ comprovantes: novaLista }).eq('id', reciboId);
     if(error){ showToast('Erro ao salvar comprovante'); console.error(error); return; }
     showToast('Comprovante anexado');
     await carregarRecibos();
-    renderAnexoWrap('recibo-comprovante-wrap', dado, 'onReciboComprovanteSelecionado', 'removerReciboComprovante');
+    const atualizado = recibos.find(x=>x.id === reciboId);
+    renderComprovantesRecibo(atualizado);
     renderHistorico();
   }).catch(err=>showToast(err.message || 'Não foi possível anexar o arquivo'));
 }
-async function removerReciboComprovante(){
+async function removerComprovanteRecibo(idx){
   const reciboId = window.currentReciboIdAberto;
-  const {error} = await supa.from('recibos').update({
-    comprovante_base64: null, comprovante_nome: null, comprovante_tipo: null,
-  }).eq('id', reciboId);
+  const r = recibos.find(x=>x.id === reciboId);
+  if(!r) return;
+  const novaLista = comprovantesDoRecibo(r).filter((_, i)=>i !== idx);
+  const {error} = await supa.from('recibos').update({ comprovantes: novaLista }).eq('id', reciboId);
   if(error){ showToast('Erro ao remover comprovante'); console.error(error); return; }
   showToast('Comprovante removido');
   await carregarRecibos();
-  renderAnexoWrap('recibo-comprovante-wrap', null, 'onReciboComprovanteSelecionado', 'removerReciboComprovante');
+  const atualizado = recibos.find(x=>x.id === reciboId);
+  renderComprovantesRecibo(atualizado);
   renderHistorico();
 }
 
